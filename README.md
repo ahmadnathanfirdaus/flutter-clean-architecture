@@ -1,71 +1,51 @@
-Here is a **full guide** tailored to your provided intention of integrating the `Result` class into a **Flutter Clean Architecture** application. We'll build a **login page** and **home page** with the following principles:
-
-- Use **Dio** for network requests.
-- Use **BLoC** for state management.
-- Implement **Clean Architecture** layers: **Domain**, **Data**, and **Presentation**.
-- Leverage the **`Result` class** to handle success and error states consistently.
-- Use **Dependency Injection** with `GetIt`.
+Here’s a **comprehensive guide to Flutter Clean Architecture** that:
+- Uses **Dio** for API requests.
+- Uses **BLoC** for state management.
+- Uses **GetIt** for dependency injection.
+- Follows a **separated layer structure** adhering to Clean Architecture principles.
 
 ---
 
 ### **Folder Structure**
-Organize your project like this:
+We will follow a modular and scalable folder structure:
 
 ```
 lib/
 ├── core/
 │   ├── network/
-│   │   ├── api_constants.dart               # API URLs and endpoints
-│   │   ├── dio_client.dart                  # Central Dio configuration
-│   ├── result.dart                          # The Result class for wrapping responses
+│   │   ├── api_constants.dart       # API URLs and endpoints
+│   │   ├── dio_client.dart          # Central Dio configuration
+│   │   ├── api_interceptor.dart     # Handles errors and headers
+│   ├── result.dart                  # Result class for consistent responses
 ├── features/
-│   ├── auth/
+│   ├── auth/                        # Authentication Feature
 │   │   ├── data/
-│   │   │   ├── auth_service.dart            # Auth service for network requests
-│   │   │   ├── auth_repository_impl.dart    # Implements AuthRepository
+│   │   │   ├── auth_service.dart       # Handles API requests
+│   │   │   ├── auth_repository_impl.dart # Implements Repository
 │   │   ├── domain/
-│   │   │   ├── entities/
-│   │   │   │   ├── user.dart                # User entity (if required)
 │   │   │   ├── repositories/
-│   │   │   │   ├── auth_repository.dart     # Repository interface
+│   │   │   │   ├── auth_repository.dart # Repository interface
 │   │   │   ├── use_cases/
-│   │   │   │   ├── login_use_case.dart      # Use case for login
+│   │   │   │   ├── login_use_case.dart # Login Use Case
 │   │   ├── presentation/
 │   │   │   ├── bloc/
-│   │   │   │   ├── login_bloc.dart          # BLoC for login logic
+│   │   │   │   ├── login_bloc.dart     # Handles login logic
 │   │   │   ├── pages/
-│   │   │   │   ├── login_page.dart          # Login screen
-│   ├── home/
+│   │   │   │   ├── login_page.dart    # Login UI
+│   ├── home/                        # Home Feature
 │   │   ├── presentation/
 │   │   │   ├── pages/
-│   │   │   │   ├── home_page.dart           # Home screen
-├── dependency_injection.dart                # Dependency injection setup
-├── main.dart                                # Entry point of the app
+│   │   │   │   ├── home_page.dart    # Home UI
+├── dependency_injection.dart         # Dependency injection setup
+├── main.dart                         # App entry point
 ```
 
 ---
 
-### **Step 1: Add Dependencies**
-Add the following dependencies in your `pubspec.yaml`:
+### **Step 1: Core Layer**
 
-```yaml
-dependencies:
-  dio: ^5.2.0
-  flutter_bloc: ^8.1.0
-  get_it: ^7.6.0
-```
-
-Run:
-```bash
-flutter pub get
-```
-
----
-
-### **Step 2: Core Setup**
-
-#### **a. Define the `Result` Class**
-Encapsulate success and error states in the `Result` class.
+#### **a. Result Class**
+A utility class to wrap API responses.
 
 ##### `core/result.dart`
 ```dart
@@ -76,24 +56,68 @@ class Result<T> {
 
   Result({this.data, this.message, required this.isSuccess});
 
-  factory Result.success(T data) {
-    return Result(data: data, isSuccess: true);
-  }
+  factory Result.success(T data) => Result(data: data, isSuccess: true);
 
-  factory Result.error(String message) {
-    return Result(message: message, isSuccess: false);
-  }
+  factory Result.error(String message) => Result(message: message, isSuccess: false);
 }
 ```
 
 ---
 
-#### **b. Configure Dio Client**
-Set up Dio for centralized HTTP requests.
+#### **b. Dio Configuration**
+Centralize Dio setup with interceptors.
+
+##### `core/network/api_constants.dart`
+```dart
+class ApiConstants {
+  static const String baseUrl = 'https://api.example.com/';
+  static const String loginEndpoint = 'auth/login';
+}
+```
+
+##### `core/network/api_interceptor.dart`
+```dart
+import 'package:dio/dio.dart';
+
+class ApiInterceptor extends Interceptor {
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final token = 'your-auth-token'; // Replace with token logic
+    if (token.isNotEmpty) {
+      options.headers['Authorization'] = 'Bearer $token';
+    }
+    super.onRequest(options, handler);
+  }
+
+  @override
+  void onError(DioError error, ErrorInterceptorHandler handler) {
+    // Handle custom error messages
+    final errorMessage = _handleError(error);
+    handler.next(DioError(
+      requestOptions: error.requestOptions,
+      response: error.response,
+      type: error.type,
+      error: errorMessage,
+    ));
+  }
+
+  String _handleError(DioError error) {
+    if (error.type == DioErrorType.connectionTimeout) {
+      return 'Connection timeout. Please try again.';
+    }
+    if (error.response?.statusCode == 401) {
+      return 'Unauthorized. Please login again.';
+    }
+    return 'Unexpected error occurred.';
+  }
+}
+```
 
 ##### `core/network/dio_client.dart`
 ```dart
 import 'package:dio/dio.dart';
+import 'api_interceptor.dart';
+import 'api_constants.dart';
 
 class DioClient {
   late final Dio _dio;
@@ -101,7 +125,7 @@ class DioClient {
   DioClient() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'https://api.example.com/', // Replace with your base URL
+        baseUrl: ApiConstants.baseUrl,
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         headers: {
@@ -109,25 +133,20 @@ class DioClient {
         },
       ),
     );
+
+    _dio.interceptors.add(ApiInterceptor());
   }
 
   Dio get dio => _dio;
 }
 ```
 
-##### `core/network/api_constants.dart`
-```dart
-class ApiConstants {
-  static const String loginEndpoint = 'auth/login';
-}
-```
-
 ---
 
-### **Step 3: Domain Layer**
+### **Step 2: Domain Layer**
 
 #### **a. Repository Interface**
-Define the contract for authentication.
+Defines the contract for the repository.
 
 ##### `features/auth/domain/repositories/auth_repository.dart`
 ```dart
@@ -138,10 +157,8 @@ abstract class AuthRepository {
 }
 ```
 
----
-
-#### **b. Login Use Case**
-Encapsulate login logic in the use case.
+#### **b. Use Case**
+Encapsulates business logic.
 
 ##### `features/auth/domain/use_cases/login_use_case.dart`
 ```dart
@@ -161,15 +178,16 @@ class LoginUseCase {
 
 ---
 
-### **Step 4: Data Layer**
+### **Step 3: Data Layer**
 
-#### **a. Auth Service**
-Handle network requests for authentication.
+#### **a. AuthService**
+Handles API requests.
 
 ##### `features/auth/data/auth_service.dart`
 ```dart
 import 'package:dio/dio.dart';
 import '../../../core/network/api_constants.dart';
+import '../../../core/result.dart';
 
 class AuthService {
   final Dio _dio;
@@ -189,7 +207,7 @@ class AuthService {
 ---
 
 #### **b. Repository Implementation**
-Implement the `AuthRepository` interface.
+Implements the repository interface.
 
 ##### `features/auth/data/auth_repository_impl.dart`
 ```dart
@@ -206,11 +224,9 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<Result<bool>> login(String email, String password) async {
     try {
       final isSuccess = await authService.login(email, password);
-      return isSuccess
-          ? Result.success(true)
-          : Result.error('Invalid email or password.');
+      return Result.success(isSuccess);
     } catch (e) {
-      return Result.error('An error occurred: $e');
+      return Result.error('Login failed: $e');
     }
   }
 }
@@ -218,10 +234,10 @@ class AuthRepositoryImpl implements AuthRepository {
 
 ---
 
-### **Step 5: Presentation Layer**
+### **Step 4: Presentation Layer**
 
 #### **a. Login BLoC**
-Manage login states.
+Handles login logic.
 
 ##### `features/auth/presentation/bloc/login_bloc.dart`
 ```dart
@@ -255,7 +271,7 @@ class LoginBloc extends Bloc<LoginEvent, LoginState> {
       if (result.isSuccess) {
         emit(LoginState(isSuccess: true));
       } else {
-        emit(LoginState(error: result.message ?? 'Unknown error'));
+        emit(LoginState(error: result.message ?? 'Unknown error occurred.'));
       }
     });
   }
@@ -265,7 +281,7 @@ class LoginBloc extends Bloc<LoginEvent, LoginState> {
 ---
 
 #### **b. Login Page**
-Build the login form.
+Builds the login UI.
 
 ##### `features/auth/presentation/pages/login_page.dart`
 ```dart
@@ -305,14 +321,10 @@ class LoginPage extends StatelessWidget {
                 children: [
                   TextField(
                     decoration: const InputDecoration(labelText: 'Email'),
-                    onChanged: (value) =>
-                        context.read<LoginBloc>().add(LoginEvent(value, '')),
                   ),
                   TextField(
                     decoration: const InputDecoration(labelText: 'Password'),
                     obscureText: true,
-                    onChanged: (value) =>
-                        context.read<LoginBloc>().add(LoginEvent('', value)),
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton(
@@ -336,7 +348,7 @@ class LoginPage extends StatelessWidget {
 
 ---
 
-### **Step 6: Dependency Injection**
+### **Step 5: Dependency Injection**
 
 #### `dependency_injection.dart`
 ```dart
@@ -360,7 +372,7 @@ void setupDependencies() {
 
 ---
 
-### **Step 7: Main and Routes**
+### **Step 6: App Entry Point**
 
 #### `main.dart`
 ```dart
@@ -379,12 +391,12 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Clean Architecture Example',
+      title: 'Flutter Clean Architecture',
       theme: ThemeData(primarySwatch: Colors.blue),
       initialRoute: '/',
       routes: {
         '/': (context) => const LoginPage(),
-        '/home': (context) => const Scaffold(body: Center(child: Text('Home'))),
+        '/home': (context) => const Scaffold(body: Center(child: Text('Home Page'))),
       },
     );
   }
@@ -393,10 +405,12 @@ class MyApp extends StatelessWidget {
 
 ---
 
-### **Conclusion**
-This complete setup includes:
-- A **`Result` class** for standardized success and error handling.
-- Proper separation of concerns across **domain**, **data**, and **presentation layers**.
-- Integration of **Dio**, **BLoC**, and **Dependency Injection**.
+### **Summary**
 
-You can extend this to include additional features while maintaining scalability and modularity. Let me know if you need further clarification!
+This guide demonstrates:
+1. **Dio** for network requests with interceptors.
+2. **BLoC** for managing state and business logic.
+3. **GetIt** for dependency injection.
+4. A fully modular **Clean Architecture** setup with separated layers.
+
+You can now build on this foundation by adding more features, such as user registration, token refresh, or additional pages! Let me know if you have further questions. 😊
